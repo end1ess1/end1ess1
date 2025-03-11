@@ -71,7 +71,13 @@ class Model(metaclass=MetaClass):
 
             return embedding
 
-    def get_answer(self, question, document):
+    def get_answer(
+        self,
+        question,
+        prompt_start,
+        message_prep,
+        document: str = None,
+    ):
         if self.model_type == "local":
             base_url = os.getenv("LOCAL_URL")
             api_key = os.getenv("LOCAL_API_KEY")
@@ -81,15 +87,21 @@ class Model(metaclass=MetaClass):
 
         client = OpenAI(base_url=base_url, api_key=api_key)
 
+        if prompt_start == os.getenv("PROMPT_MAIN"):
+            message = message_prep.format(document=document, question=question)
+        else:
+            message = message_prep.format(question=question)
+
+        print(f"PROMPT: {prompt_start}")
+        print(f"MESSAGE_USER: {message}")
+
         completion = client.chat.completions.create(
             model=os.getenv("MODEL"),
             messages=[
-                {"role": "system", "content": os.getenv("PROMPT")},
+                {"role": "system", "content": prompt_start},
                 {
                     "role": "user",
-                    "content": os.getenv("MESSAGE").format(
-                        document=document, question=question
-                    ),
+                    "content": message,
                 },
             ],
         )

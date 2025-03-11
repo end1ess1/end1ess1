@@ -19,14 +19,6 @@ from model_lib import Model
 from log_lib import Log
 
 
-# def _get_key_words(text):
-#     unique_words = list(set(text.split()))
-#     lemmas = [MorphAnalyzer().parse(word)[0].normal_form for word in unique_words]
-#     uniq_lemmas = list(set(lemmas))
-
-#     return " ".join(uniq_lemmas)
-
-
 def _get_embedded_doc(data: Dict[str, str]) -> DocumentData:
     doc_data = DocumentData(
         text=data["text"],
@@ -53,7 +45,7 @@ def _get_embedded_doc(data: Dict[str, str]) -> DocumentData:
 def get_docs_list(folder: str) -> List[Dict[str, str]]:
     data = []
 
-    for file in os.listdir(folder)[:1]:
+    for file in os.listdir(folder)[:]:
         if file.endswith(".json"):
             with open(os.path.join(folder, file), "r", encoding="utf-8") as ff:
                 data.extend(json.load(ff))

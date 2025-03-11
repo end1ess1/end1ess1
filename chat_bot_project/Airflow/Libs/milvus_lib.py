@@ -13,6 +13,7 @@ from pymilvus import (
     Function,
     FunctionType,
     RRFRanker,
+    MilvusClient,
 )
 from pymilvus.model.reranker import CrossEncoderRerankFunction
 from pymorphy3 import MorphAnalyzer
@@ -36,7 +37,7 @@ class CollectionConfig:
                 name="id", dtype=DataType.INT64, is_primary=True, auto_id=cls.AUTO_ID
             ),
             FieldSchema(name="dense", dtype=DataType.FLOAT_VECTOR, dim=dimension),
-            FieldSchema(name="sparse", datatype=DataType.SPARSE_FLOAT_VECTOR),
+            FieldSchema(name="sparse", dtype=DataType.SPARSE_FLOAT_VECTOR),
             FieldSchema(
                 name="text",
                 dtype=DataType.VARCHAR,
@@ -54,7 +55,7 @@ class IndexConfig:
 
     EMBEDDING_INDEX_NAME = "dense_embedding"
     INDEX_TYPE = "IVF_FLAT"
-    METRIC_TYPE = "L2"
+    METRIC_TYPE = "IP"
     INDEX_PARAMS = {"nlist": 128}
 
 
@@ -83,6 +84,9 @@ class MilvusDBClient:
         try:
             connections.connect(alias=self._connection_alias, host=host, port=port)
             self._is_connected = True
+            self.client = MilvusClient(
+                uri="http://localhost:19530", token="root:Milvus"
+            )
             self.logging.log("Подключение к Milvus успешно!")
         except Exception as e:
             self.logging.error(f"Ошибка: {e}")
@@ -219,7 +223,6 @@ class MilvusDBClient:
         question: str,
         model_type: str = "notLocal",
         reranker: CrossEncoderRerankFunction = None,
-        top_k=10,
     ):
         embedding = Model(model_type=model_type).get_embedding(question)
 
@@ -243,25 +246,25 @@ class MilvusDBClient:
             req2 = AnnSearchRequest(
                 data=[embedding],
                 anns_field="dense",
-                param={"metric_type": "IP", "params": {"nprobe": 10}},
+                param={"metric_type": "IP", "params": {"nprobe": 100}},
                 limit=2,
             )
 
             # Гибридный поиск
-            results = self.collection.hybrid_search(
-                collection_name="hybrid_search_collection",
+            results = self.client.hybrid_search(
+                collection_name="MiigaikDocsInfo",
                 reqs=[req1, req2],
-                ranker=RRFRanker(100),
+                ranker=RRFRanker(60),
                 limit=3,
                 output_fields=["text", "section", "keywords"],
             )
 
             search_results = [
                 {
-                    "text": hit.entity.get("text"),
-                    "section": hit.entity.get("section"),
-                    "keywords": hit.entity.get("keywords"),
-                    "distance": hit.distance,
+                    "text": hit["entity"].get("text"),
+                    "section": hit["entity"].get("section"),
+                    "keywords": hit["entity"].get("keywords"),
+                    "distance": hit["distance"],
                 }
                 for hit in results[0]
             ]

@@ -71,66 +71,128 @@ async def log_message(
 @ROUTER.message(Command("start"))
 async def send_welcome(message: Message):
     logging.log("Приветствие бота")
-    await message.answer(
-        "Привет! Я бот-помощник Гисик. Могу помочь с любыми вопросами!"
-    )
+    await message.answer("Привет! Я бот-помощник Гисик. Задавай любой вопрос!")
 
 
 @handle_errors
 @ROUTER.message()
 async def handle_message(message: Message):
-    print(f"Вопрос пользователя: {message.text}")  # Для отображения в логах
+    print(f"Вопрос пользователя: {message.text}")
     question_date = datetime.now()
-    # answers = client.search_answer(question=message.text, reranker=reranker)
-    answers = client.search_answer(question=message.text)
-    logging.log("Получили похожие тексты из БД")
 
-    if answers:
-        final_answer = Model(model_type="local").get_answer(
-            message.text,
-            "\n".join(answer["text"] for answer in answers[:3] if answer.get("text")),
-        )
-    else:
-        final_answer = "Данные по вашему вопросу, к сожалению, не найдены.\nПопробуйте переформулировать вопрос или задать другой."
+    # Поищи сначала в редисе:
 
-    logging.success("Модель ответила на вопрос пользователя")
+    import redis
 
-    await message.answer(final_answer)
+    r = redis.Redis(host="localhost", port=6379, db=3)
 
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Да", callback_data="feedback_yes")],
-            [InlineKeyboardButton(text="Нет", callback_data="feedback_no")],
-        ]
+    final_answer = r.hget(message.text, "answer")
+    if final_answer:
+        logging.log("Вопрос пользователя найден в кеше")
+        print("Вопрос пользователя найден в кеше")
+        await message.answer(final_answer.decode("utf-8"))
+
+        print(f"Ответ: {final_answer.decode("utf-8")}")
+
+        answer_date = datetime.now()
+
+        data_logs = {
+            "message": message,
+            "answer": final_answer.decode("utf-8"),
+            "question_date": question_date,
+            "answer_date": answer_date,
+        }
+
+        await log_message(**data_logs)
+
+        logging.success("Модель ответила на вопрос пользователя")
+
+        return
+
+    agent_answer = model.get_answer(
+        message.text, os.getenv("PROMPT_AGENT"), os.getenv("MESSAGE_AGENT")
     )
-    await message.answer("Был ли Вам полезен мой ответ?", reply_markup=keyboard)
 
-    result = []
-    for i, answer in enumerate(answers[:3], start=1):
-        result.append(
-            f"""
-            Результат #{i}:
-            Текст: {answer.get('text', 'Нет данных')}
-            Раздел: {answer.get('section', 'Нет данных')}
-            Статья: {answer.get('article', 'Нет данных')}
-            Схожесть: {1 - answer.get('distance', 1):.2%}
-            """
+    if agent_answer == "Да":
+        logging.log("Вопрос пользователя относится к вузу")
+        print("Вопрос пользователя относится к вузу")
+        # answers = client.search_answer(question=message.text, reranker=reranker)
+
+        answers = client.search_answer(message.text)
+        logging.log("Получили похожие тексты из БД")
+
+        if answers:
+            final_answer = model.get_answer(
+                message.text,
+                os.getenv("PROMPT_MAIN"),
+                os.getenv("MESSAGE_MAIN"),
+                "\n".join(
+                    answer["text"] for answer in answers[:3] if answer.get("text")
+                ),
+            )
+        else:
+            final_answer = "Данные по вашему вопросу, к сожалению, не найдены.\nПопробуйте переформулировать вопрос или задать другой."
+
+        await message.answer(final_answer)
+
+        result = []
+        for i, answer in enumerate(answers[:3], start=1):
+            result.append(
+                f"""
+                Результат #{i}:
+                Текст: {answer.get('text', 'Нет данных')}
+                Раздел: {answer.get('section', 'Нет данных')}
+                Статья: {answer.get('article', 'Нет данных')}
+                Схожесть: {1 - answer.get('distance', 1):.2%}
+                """
+            )
+
+        result.append(f"----\n\nОтвет: {final_answer}")
+
+        pprint("".join(result))
+
+        answer_date = datetime.now()
+
+        data_logs = {
+            "message": message,
+            "answer": final_answer,
+            "question_date": question_date,
+            "answer_date": answer_date,
+        }
+
+        user_logs[message.from_user.id] = data_logs
+
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="Да", callback_data="feedback_yes")],
+                [InlineKeyboardButton(text="Нет", callback_data="feedback_no")],
+            ]
+        )
+        await message.answer("Был ли Вам полезен мой ответ?", reply_markup=keyboard)
+
+    else:
+        logging.log("Вопрос пользователя не относится к вузу")
+        print("Вопрос пользователя не относится к вузу")
+        final_answer = model.get_answer(
+            message.text, os.getenv("PROMPT_COMMON"), os.getenv("MESSAGE_COMMON")
         )
 
-    result.append(f"----\n\nОтвет: {final_answer}")
+        await message.answer(final_answer)
 
-    pprint("".join(result))
+        print(f"Ответ: {final_answer}")
 
-    answer_date = datetime.now()
+        answer_date = datetime.now()
 
-    data_logs = {
-        "message": message,
-        "answer": final_answer,
-        "question_date": question_date,
-        "answer_date": answer_date,
-    }
+        data_logs = {
+            "message": message,
+            "answer": final_answer,
+            "question_date": question_date,
+            "answer_date": answer_date,
+        }
 
-    user_logs[message.from_user.id] = data_logs
+        await log_message(**data_logs)
+
+        logging.success("Модель ответила на вопрос пользователя")
 
 
 @ROUTER.callback_query(lambda c: c.data.startswith("feedback_"))
@@ -148,6 +210,7 @@ async def handle_feedback(callback_query: types.CallbackQuery):
     await callback_query.message.answer(feedback)
     await callback_query.answer()
     await log_message(**user_logs[callback_query.from_user.id])
+    logging.success("Модель ответила на вопрос пользователя")
 
 
 async def main():
@@ -166,17 +229,17 @@ if __name__ == "__main__":
     ChatHistory = ChatHistory(*connect_to_databases(), SCRIPT_NAME)
     logging.success("Подключение к БД успешно!")
 
+    model = Model()
+    logging.success("Инициализация модели успешно!")
+
     client = MilvusDBClient(LibLog=logging)
     client.connect()
     client.create_collection(name="MiigaikDocsInfo", dimension=3072)
-    client.create_index()
 
     reranker = CrossEncoderRerankFunction(
         model_name=os.getenv("RERANKER_MODEL"),
         device="cpu",
     )
-
-    logging.log("Инициализация Бота")
 
     BOT = Bot(token=os.getenv("API_TOKEN"))
     DP = Dispatcher()

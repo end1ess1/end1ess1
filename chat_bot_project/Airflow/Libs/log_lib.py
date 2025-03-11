@@ -32,32 +32,40 @@ class RedisConfig:
     def chat_history_entry(dict_config: Dict[str, Union[str, datetime]]):
         c = ChatHistoryConfig(**dict_config)
 
-        return {
-            "user_id": str(c.user_id),
-            "first_name": str(c.first_name),
-            "last_name": str(c.last_name),
-            "username": str(c.username),
-            "chat_id": str(c.chat_id),
-            "question": str(c.question),
-            "answer": str(c.answer),
-            "feedback": str(c.feedback),
-            "question_length": str(len(c.question)),
-            "answer_length": str(len(c.answer)),
-            "response_time_s": str((c.answer_date - c.question_date).total_seconds()),
-            "language_code": str(c.language_code),
-            "question_date": str(c.question_date),
-            "answer_date": str(c.answer_date),
-        }
+        return [
+            str(c.question),
+            {
+                # "user_id": str(c.user_id),
+                # "first_name": str(c.first_name),
+                # "last_name": str(c.last_name),
+                # "username": str(c.username),
+                # "chat_id": str(c.chat_id),
+                # "question": str(c.question),
+                "answer": str(c.answer),
+                # "feedback": str(c.feedback),
+                # "question_length": str(len(c.question)),
+                # "answer_length": str(len(c.answer)),
+                # "response_time_s": str(
+                #     (c.answer_date - c.question_date).total_seconds()
+                # ),
+                # "language_code": str(c.language_code),
+                # "question_date": str(c.question_date),
+                # "answer_date": str(c.answer_date),
+            },
+        ]
 
     @staticmethod
     def logs_entry(level: str, comment: str):
-        return {
-            "processed_dttm": str(
-                datetime.strftime(datetime.now(), "%Y-%m-%d %H:%M:%S")
-            ),
-            "level": level,
-            "comment": comment,
-        }
+        return [
+            "last_log",
+            {
+                "processed_dttm": str(
+                    datetime.strftime(datetime.now(), "%Y-%m-%d %H:%M:%S")
+                ),
+                "level": level,
+                "comment": comment,
+            },
+        ]
 
 
 class PostgreConfig:
@@ -180,10 +188,10 @@ class Log(metaclass=MetaClass):
         return sql_insert_logs, redis_mapping
 
     def _redis_caching_expire(self, mapping):
-        self.redis_conn.hset(name=self.script_name, mapping=mapping)
-        self.redis_conn.expire(name=self.script_name, time=86400)
+        self.redis_conn.hset(name=mapping[0], mapping=mapping[1])
+        self.redis_conn.expire(name=mapping[0], time=86400)
 
-    def insert(self, sql_sample: str, redis_mapping: dict) -> None:
+    def insert(self, sql_sample: str, redis_mapping: list) -> None:
         with self.postgresql_conn.cursor() as cur:
             cur.execute(sql_sample)
 
