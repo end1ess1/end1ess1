@@ -12,7 +12,7 @@ services:
       - milvus_apps_network
     volumes:
       - etcd_data:/etcd
-      - ${VOLUME_PATH_LOCAL}:/etcd
+      - ${VOLUME_PATH}:/etcd
     healthcheck:
       test: [ "CMD", "etcdctl", "endpoint", "health" ]
       interval: 5s
@@ -33,7 +33,7 @@ services:
       - milvus_apps_network
     volumes:
       - milvus_data:/var/lib/milvus
-      - ${VOLUME_PATH_LOCAL}:/var/lib/milvus
+      - ${VOLUME_PATH}:/var/lib/milvus
     depends_on:
       etcd:
         condition: service_healthy

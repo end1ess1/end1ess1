@@ -14,7 +14,7 @@ services:
     networks:
       - p_apps_network
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "super_user", "-d", "telegram_bot_db"]
+      test: [ "CMD", "pg_isready", "-U", "super_user", "-d", "telegram_bot_db" ]
       interval: 10s
       retries: 5
 
@@ -33,12 +33,12 @@ services:
     networks:
       - p_apps_network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      test: [ "CMD", "curl", "-f", "http://localhost:80" ]
       interval: 30s
       retries: 5
       start_period: 10s
       timeout: 5s
-  
+
 volumes:
   postgres-volume:
     name: postgres-volume

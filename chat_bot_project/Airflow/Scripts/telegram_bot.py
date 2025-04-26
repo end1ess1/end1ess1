@@ -6,8 +6,13 @@ import traceback
 from datetime import datetime
 from dotenv import load_dotenv
 from pprint import pprint
+import redis
+import speech_recognition as sr
+from pydub import AudioSegment
+import tempfile
+import subprocess
 
-from aiogram import Bot, Dispatcher, types, Router
+from aiogram import Bot, Dispatcher, types, Router, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
 from rich.traceback import install
@@ -41,24 +46,30 @@ def handle_errors(func):
 
 @handle_errors
 async def log_message(
-    message: Message,
+    user_id: int,
+    first_name: str,
+    last_name: str,
+    username: str,
+    chat_id: str,
+    question: str,
     answer: str,
     question_date: datetime,
     answer_date: datetime,
+    language_code: str = "ru",
     feedback: str = "None",
 ):
     __dicting__ = {
-        "user_id": message.from_user.id,
-        "first_name": message.from_user.first_name,
-        "last_name": message.from_user.last_name,
-        "username": message.from_user.username,
-        "chat_id": message.chat.id,
-        "question": message.text,
+        "user_id": user_id,
+        "first_name": first_name,
+        "last_name": last_name,
+        "username": username,
+        "chat_id": chat_id,
+        "question": question,
         "answer": answer,
         "feedback": feedback,
         "question_date": question_date,
         "answer_date": answer_date,
-        "language_code": message.from_user.language_code,
+        "language_code": language_code,
         "model_version": os.getenv("MODEL_VERSION"),
         "log_table_name": os.getenv("LOG_TABLE_NAME"),
     }
@@ -74,33 +85,33 @@ async def send_welcome(message: Message):
     await message.answer("Привет! Я бот-помощник Гисик. Задавай любой вопрос!")
 
 
-@handle_errors
-@ROUTER.message()
-async def handle_message(message: Message):
-    print(f"Вопрос пользователя: {message.text}")
+async def get_llm_message(chat_id, question, user_id, first_name, last_name, username):
     question_date = datetime.now()
 
     # Поищи сначала в редисе:
-
-    import redis
-
     r = redis.Redis(host="localhost", port=6379, db=3)
 
-    final_answer = r.hget(message.text, "answer")
+    final_answer = r.hget(question, "answer")
     if final_answer:
         logging.log("Вопрос пользователя найден в кеше")
         print("Вопрос пользователя найден в кеше")
-        await message.answer(final_answer.decode("utf-8"))
+
+        await BOT.send_message(text=final_answer.decode("utf-8"), chat_id=chat_id)
 
         print(f"Ответ: {final_answer.decode("utf-8")}")
 
         answer_date = datetime.now()
 
         data_logs = {
-            "message": message,
+            "question": question,
             "answer": final_answer.decode("utf-8"),
             "question_date": question_date,
             "answer_date": answer_date,
+            "user_id": user_id,
+            "first_name": first_name,
+            "last_name": last_name,
+            "username": username,
+            "chat_id": chat_id,
         }
 
         await log_message(**data_logs)
@@ -110,7 +121,7 @@ async def handle_message(message: Message):
         return
 
     agent_answer = model.get_answer(
-        message.text, os.getenv("PROMPT_AGENT"), os.getenv("MESSAGE_AGENT")
+        question, os.getenv("PROMPT_AGENT"), os.getenv("MESSAGE_AGENT")
     )
 
     if agent_answer == "Да":
@@ -118,12 +129,12 @@ async def handle_message(message: Message):
         print("Вопрос пользователя относится к вузу")
         # answers = client.search_answer(question=message.text, reranker=reranker)
 
-        answers = client.search_answer(message.text)
+        answers = client.search_answer(question)
         logging.log("Получили похожие тексты из БД")
 
         if answers:
             final_answer = model.get_answer(
-                message.text,
+                question,
                 os.getenv("PROMPT_MAIN"),
                 os.getenv("MESSAGE_MAIN"),
                 "\n".join(
@@ -133,7 +144,7 @@ async def handle_message(message: Message):
         else:
             final_answer = "Данные по вашему вопросу, к сожалению, не найдены.\nПопробуйте переформулировать вопрос или задать другой."
 
-        await message.answer(final_answer)
+        await BOT.send_message(text=final_answer, chat_id=chat_id)
 
         result = []
         for i, answer in enumerate(answers[:3], start=1):
@@ -154,13 +165,18 @@ async def handle_message(message: Message):
         answer_date = datetime.now()
 
         data_logs = {
-            "message": message,
+            "question": question,
             "answer": final_answer,
             "question_date": question_date,
             "answer_date": answer_date,
+            "user_id": user_id,
+            "first_name": first_name,
+            "last_name": last_name,
+            "username": username,
+            "chat_id": chat_id,
         }
 
-        user_logs[message.from_user.id] = data_logs
+        user_logs[chat_id] = data_logs
 
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -168,31 +184,145 @@ async def handle_message(message: Message):
                 [InlineKeyboardButton(text="Нет", callback_data="feedback_no")],
             ]
         )
-        await message.answer("Был ли Вам полезен мой ответ?", reply_markup=keyboard)
+        await BOT.send_message(
+            text="Был ли Вам полезен мой ответ?",
+            reply_markup=keyboard,
+            chat_id=chat_id,
+        )
 
     else:
         logging.log("Вопрос пользователя не относится к вузу")
         print("Вопрос пользователя не относится к вузу")
         final_answer = model.get_answer(
-            message.text, os.getenv("PROMPT_COMMON"), os.getenv("MESSAGE_COMMON")
+            question, os.getenv("PROMPT_COMMON"), os.getenv("MESSAGE_COMMON")
         )
 
-        await message.answer(final_answer)
+        await BOT.send_message(text=final_answer, chat_id=chat_id)
 
         print(f"Ответ: {final_answer}")
 
         answer_date = datetime.now()
 
         data_logs = {
-            "message": message,
+            "question": question,
             "answer": final_answer,
             "question_date": question_date,
             "answer_date": answer_date,
+            "user_id": user_id,
+            "first_name": first_name,
+            "last_name": last_name,
+            "username": username,
+            "chat_id": chat_id,
         }
 
         await log_message(**data_logs)
 
         logging.success("Модель ответила на вопрос пользователя")
+
+
+@handle_errors
+@ROUTER.message(F.text)
+async def handle_message(message: Message):
+    print(f"Вопрос пользователя: {message.text}")
+
+    user = message.from_user
+
+    await get_llm_message(
+        message.chat.id,
+        message.text,
+        user.id,
+        user.first_name,
+        user.last_name,
+        user.username,
+    )
+
+
+async def convert_ogg_to_wav(ogg_path, wav_path):
+    try:
+        voice = AudioSegment.from_file(ogg_path, format="ogg")
+        voice.export(wav_path, format="wav")
+        print(f"Файл успешно конвертирован: {ogg_path} -> {wav_path}")
+        return True
+    except Exception as e:
+        print(f"Ошибка при конвертации через pydub: {e}")
+        try:
+            command = f"ffmpeg -i {ogg_path} -ac 1 -ar 16000 {wav_path} -y"
+            subprocess.call(command, shell=True)
+            print(f"Файл конвертирован через ffmpeg: {ogg_path} -> {wav_path}")
+            return True
+        except Exception as e:
+            print(f"Ошибка конвертации файла через ffmpeg: {e}")
+            return False
+
+
+def recognize_speech(wav_file_path, language="ru-RU"):
+    recognizer = sr.Recognizer()
+    try:
+        with sr.AudioFile(wav_file_path) as source:
+            audio_data = recognizer.record(source)
+            print("Распознавание речи...")
+            text = recognizer.recognize_google(audio_data, language=language)
+            return text
+    except sr.UnknownValueError:
+        return "Не удалось распознать речь"
+    except sr.RequestError as e:
+        return f"Ошибка сервиса распознавания: {e}"
+    except Exception as e:
+        return f"Ошибка: {e}"
+
+
+@ROUTER.message(F.voice)
+async def handle_voice(message: Message):
+    print(f"Получено голосовое сообщение от {message.from_user.first_name}")
+
+    try:
+        if not os.path.exists("voice_files"):
+            os.makedirs("voice_files")
+
+        file_id = message.voice.file_id
+        file = await BOT.get_file(file_id)
+        file_path = file.file_path
+
+        ogg_path = f"voice_files/voice_{file_id}.ogg"
+        await BOT.download_file(file_path, ogg_path)
+        print(f"Голосовое сообщение сохранено: {ogg_path}")
+
+        wav_path = f"voice_files/voice_{file_id}.wav"
+
+        await message.answer("Обрабатываю ваше голосовое сообщение...")
+
+        if await convert_ogg_to_wav(ogg_path, wav_path):
+            recognized_text = recognize_speech(wav_path)
+
+            await message.answer(f"Ваше сообщение: {recognized_text}")
+            print(f"Распознанный текст: {recognized_text}")
+
+            user = message.from_user
+
+            await get_llm_message(
+                message.chat.id,
+                recognized_text,
+                user.id,
+                user.first_name,
+                user.last_name,
+                user.username,
+            )
+        else:
+            await message.answer("Не удалось обработать голосовое сообщение")
+
+        # Удаляем временные файлы
+        try:
+            os.remove(ogg_path)
+            os.remove(wav_path)
+            print("Временные файлы удалены")
+        except Exception as e:
+            print(f"Не удалось удалить временные файлы: {e}")
+
+    except Exception as e:
+        print(f"Ошибка при обработке голосового сообщения: {e}")
+        await message.answer(
+            f"Произошла ошибка при обработке голосового сообщения: {e}"
+        )
 
 
 @ROUTER.callback_query(lambda c: c.data.startswith("feedback_"))
